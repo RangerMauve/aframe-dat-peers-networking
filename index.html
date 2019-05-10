@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<title>Aframe Dat Peers Networking</title>
+<meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<pre id="messages"></pre>
+<form id="input_form">
+  <input id="text">
+</form>
+<script type="module">
+  import NetworkingEvents from './NetworkingEvents.js'
+
+  const form = document.querySelector("#input_form")
+  const messages = document.querySelector("#messages")
+  const text = document.querySelector('#text')
+
+  const id =  Math.random()
+  const version = '1'
+  const networkType = 'aframe-dat-peers-networking'
+
+  const network = new NetworkingEvents(
+    experimental.datPeers,
+    id,
+    version,
+    networkType
+  )
+
+  network.addEventListener('message', ({detail}) => {
+    const {method, data} = detail
+
+    if(method === 'user_chat') {
+      const {message, userId} = data
+      addMessage(userId, message)
+    }
+  })
+
+  network.connect()
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault()
+    const message = text.value
+    network.chat(message)
+    addMessage(id, message)
+    text.value = ""
+  })
+
+  function addMessage(userId, message) {
+    messages.innerText += `\n${userId}: ${message}`
+  }
+</script>

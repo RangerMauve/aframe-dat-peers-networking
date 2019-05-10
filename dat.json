@@ -1,0 +1,6 @@
+{
+  "title": "Aframe Dat Peers Networking",
+  "experimental": {
+     "apis": ["datPeers"]
+   }
+}
