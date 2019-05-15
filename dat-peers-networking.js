@@ -8,6 +8,7 @@ class NetworkingEvents extends EventTarget {
     this.rooms = new Set()
 
     this.onMessage = this.onMessage.bind(this)
+    this.onConnect = this.onConnect.bind(this)
   }
 
   send (data) {
@@ -26,6 +27,7 @@ class NetworkingEvents extends EventTarget {
 
   async connect () {
     this.datPeers.addEventListener('message', this.onMessage)
+    this.datPeers.addEventListener('connect', this.onConnect)
     await this.sendLogon()
   }
 
@@ -35,7 +37,22 @@ class NetworkingEvents extends EventTarget {
 
   disconnect () {
     this.datPeers.removeEventListener('message', this.onMessage)
+    this.datPeers.removeEventListener('connect', this.onConnect)
     this.datPeers.setSessionData({})
+  }
+
+  onConnect ({ peer }) {
+    console.log('Connected user', peer)
+
+    const { userId, roomId } = this
+
+    // Don't send if you haven't entered a room yet
+    if (!roomId) return
+
+    // Send them a user_enter event for our current room
+    const method = 'user_enter'
+    const data = { userId, roomId }
+    peer.send({ type: this.networkType, data: { method, data } })
   }
 
   onMessage ({ peer, message }) {
@@ -102,7 +119,7 @@ class NetworkingEvents extends EventTarget {
 
     const method = 'user_enter'
     const { userId } = this
-    const data = { userId }
+    const data = { userId, roomId }
     this.send({ method, data })
   }
 
@@ -114,7 +131,7 @@ class NetworkingEvents extends EventTarget {
 
     const method = 'user_leave'
     const { userId } = this
-    const data = { userId }
+    const data = { userId, roomId }
     this.send({ method, data })
   }
 
@@ -159,7 +176,7 @@ AFRAME.registerComponent('dat-networked-scene', {
     this.network.connect()
 
     this.connected = true
-    this.el.emit('network:connected'.this.network)
+    this.el.emit('network:connected', this.network)
 
     this.onMessage = this.onMessage.bind(this)
 
@@ -227,6 +244,7 @@ AFRAME.registerComponent('dat-networked', {
 
   enterRoom () {
     const component = this.getNetworkComponent()
+    if (!component) return console.log('Unable to enter room')
     component.network.enter_room(this.data.room)
   },
 
@@ -237,7 +255,9 @@ AFRAME.registerComponent('dat-networked', {
   },
 
   getNetworkComponent: function () {
-    return this.el.sceneEl.components['dat-networked-scene']
+    const scene = this.el.sceneEl
+    const networkComponent = scene.components['dat-networked-scene']
+    return networkComponent
   },
 
   sendPosition: function () {
@@ -256,7 +276,7 @@ AFRAME.registerComponent('dat-networked', {
   },
 
   tick: function () {
-    if (!this.isSceneReady()) return
+    if (!this.isSceneReady()) return console.log('Scene not ready')
 
     const object = this.el.object3D
     const position = object.position
