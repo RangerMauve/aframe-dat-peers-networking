@@ -9,10 +9,11 @@ class NetworkingEvents extends EventTarget {
 
     this.onMessage = this.onMessage.bind(this)
     this.onConnect = this.onConnect.bind(this)
+    this.onDisconnect = this.onDisconnect.bind(this)
   }
 
   send (data) {
-    console.log('Sending data', data)
+    // console.log('Sending data', data)
     this.datPeers.broadcast({ type: this.networkType, data })
   }
 
@@ -28,6 +29,7 @@ class NetworkingEvents extends EventTarget {
   async connect () {
     this.datPeers.addEventListener('message', this.onMessage)
     this.datPeers.addEventListener('connect', this.onConnect)
+    this.datPeers.addEventListener('disconnect', this.onDisconnect)
     await this.sendLogon()
   }
 
@@ -38,11 +40,12 @@ class NetworkingEvents extends EventTarget {
   disconnect () {
     this.datPeers.removeEventListener('message', this.onMessage)
     this.datPeers.removeEventListener('connect', this.onConnect)
+    this.datPeers.removeEventListener('disconnect', this.onDisconnect)
     this.datPeers.setSessionData({})
   }
 
   onConnect ({ peer }) {
-    console.log('Connected user', peer)
+    // console.log('Connected user', peer)
 
     const { userId, roomId } = this
 
@@ -55,8 +58,25 @@ class NetworkingEvents extends EventTarget {
     peer.send({ type: this.networkType, data: { method, data } })
   }
 
+  onDisconnect ({peer}) {
+    // console.log('Disconnected user', peer)
+
+    const {sessionData} = peer
+    if(!sessionData) return
+
+    const { userId, roomId } = sessionData
+
+    // Don't send if you haven't entered a room yet
+    if (!roomId) return
+
+    // Send them a user_enter event for our current room
+    const method = 'user_leave'
+    const data = { userId, roomId }
+    peer.send({ type: this.networkType, data: { method, data } })
+  }
+
   onMessage ({ peer, message }) {
-    console.log('Got data', peer, message)
+    // console.log('Got data', peer, message)
     const { type, data } = message
 
     // Ignore messages that aren't for this network type
@@ -113,6 +133,7 @@ class NetworkingEvents extends EventTarget {
   }
 
   enter_room (roomId) {
+    this.subscribe(roomId)
     this.roomId = roomId
 
     this.sendLogon()
@@ -124,6 +145,7 @@ class NetworkingEvents extends EventTarget {
   }
 
   leave_room (roomId) {
+    this.unsubscribe(roomId)
     if (this.roomId === roomId) {
       this.roomId = null
       this.sendLogon()
@@ -176,7 +198,7 @@ AFRAME.registerComponent('dat-networked-scene', {
     this.network.connect()
 
     this.connected = true
-    this.el.emit('network:connected', this.network)
+    this.el.emit('network-connected', this.network)
 
     this.onMessage = this.onMessage.bind(this)
 
@@ -186,24 +208,37 @@ AFRAME.registerComponent('dat-networked-scene', {
   onMessage ({ detail }) {
     const { method, data } = detail
 
-    this.el.emit(`network:${method}`, data)
+    const emitEvent = `network-${method}`
+
+    console.log('Emitting', emitEvent, this.el)
+    this.el.emit(emitEvent, data)
     if (data.userId) {
-      this.el.emit(`network:${data.userId}:${method}`, data)
+      this.el.emit(`network-${data.userId}-${method}`, data)
     }
 
     if (method === 'user_enter') {
       const templateSelector = this.data.template
       if (!templateSelector) return console.error('Cannot create user entity without a template')
-      const { userId } = data
+      const { userId, roomId } = data
+
+      const ownRoom = this.network.roomId
+
+      // Ignore events from rooms we're not in
+      if(ownRoom !== roomId) return console.error('Ignoring user enter from', roomId, ownRoom)
+
       const exists = document.getElementById(userId)
-      if (exists) return
+      if (exists) return console.error('User ID already exists')
+
+      this.network.enter_room(roomId)
 
       const template = document.querySelector(templateSelector)
 
-      const entity = document.importNode(template.content, true)
+      const entity = document.importNode(template.content, true).firstElementChild
+
+      console.log('Created entity', entity)
 
       entity.setAttribute('id', userId)
-      entity.createAttribute('dat-networked-remote')
+      entity.setAttribute('dat-networked-remote', '')
 
       const container = document.querySelector(this.data.container) || this.el
 
@@ -229,7 +264,7 @@ AFRAME.registerComponent('dat-networked', {
     if (this.isSceneReady()) {
       this.enterRoom()
     } else {
-      this.el.sceneEl.addEventListener('network:connected', () => {
+      this.el.sceneEl.addEventListener('network-connected', () => {
         this.enterRoom(this.data.room)
       })
     }
@@ -311,22 +346,29 @@ AFRAME.registerComponent('dat-networked-remote', {
   init: function () {
     this.onMove = this.onMove.bind(this)
 
-    this.sceneEl.addEventListener('network:user_moved', this.onMove)
+    const net = document.querySelector('[dat-networked-scene]')
+
+    net.addEventListener('network-user_moved', this.onMove)
   },
 
-  onMove ({ userId, roomId, position }) {
+  onMove ({ detail }) {
+    const {userId, roomId, position} = detail
     const ownId = this.el.getAttribute('id')
     if (userId !== ownId) return
+
+    console.log('Move', userId, position)
+
     const { pos, dir } = position
+
+    this.el.setAttribute("position", pos.slice(0, 3).join(' '))
 
     const object = this.el.object3D
 
-    object.position.fromArray(pos)
     object.rotation.fromArray(dir)
   },
 
   remove: function () {
     // Stop listening for events
-    this.sceneEl.removeEventListener('network:user_moved', this.onMove)
+    this.sceneEl.removeEventListener('network-user_moved', this.onMove)
   }
 })
